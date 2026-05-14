@@ -254,34 +254,43 @@ async def nt_fetch_articles(seen: set, username: str, password: str) -> list:
             await page.wait_for_timeout(2000)
 
         # ── Steg 4: Fyll i e-post (steg 1 av 2-stegsinloggning) ──────────────
-        email_selector = (
-            "input[type='email']:visible, input[name='Username']:visible, "
-            "input[id='Username']:visible, input[name='email']:visible"
-        )
-        await page.wait_for_selector(email_selector, timeout=15000)
-        await page.fill(email_selector, username)
-        print(f"   ✅ E-post ifylld")
+        # Prova flera möjliga selektorer för e-postfältet på login.ntm.se
+        email_filled = False
+        for sel in [
+            "input[type='email']",
+            "input[name='Username']",
+            "input[id='Username']",
+            "input[name='email']",
+            "input[name='Email']",
+            "input[type='text']",
+        ]:
+            try:
+                await page.wait_for_selector(sel, state="visible", timeout=5000)
+                await page.fill(sel, username)
+                email_filled = True
+                print(f"   ✅ E-post ifylld (selector: {sel})")
+                break
+            except:
+                continue
 
-        # Klicka synlig Nästa-knapp
+        if not email_filled:
+            print("   ⚠️  Kunde inte hitta e-postfält – hoppar över NT")
+            await browser.close()
+            return articles
+
+        # Klicka Nästa-knapp
         try:
-            await page.click(
-                "button:visible:has-text('Nästa'), button:visible:has-text('Fortsätt'), "
-                "input[type='submit']:visible",
-                timeout=5000
-            )
+            await page.locator("button[type='submit'], input[type='submit']").first.click(timeout=5000)
             await page.wait_for_timeout(2000)
         except:
             pass
 
         # ── Steg 5: Fyll i lösenord ───────────────────────────────────────────
-        await page.wait_for_selector("input[type='password']:visible", timeout=10000)
+        await page.wait_for_selector("input[type='password']", state="visible", timeout=10000)
         await page.fill("input[type='password']", password)
 
-        # Klicka synlig inloggningsknapp
-        await page.click(
-            "button:visible[type='submit'], input:visible[type='submit']",
-            timeout=5000
-        )
+        # Klicka inloggningsknapp
+        await page.locator("button[type='submit'], input[type='submit']").first.click(timeout=5000)
         await page.wait_for_load_state("networkidle", timeout=20000)
         await page.wait_for_timeout(2000)
         print(f"   ✅ Inloggad på NT.se (nu på {page.url})")

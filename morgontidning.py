@@ -4,13 +4,13 @@ Kombinerar SVT, NT.se och Tech-nyheter till en daglig HTML-tidning
 och laddar upp den till Google Drive för Kobo Libra Colour.
 """
 
-import os, json, asyncio
+import os, json
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 import feedparser
-from playwright.async_api import async_playwright
+
 from openai import OpenAI
 
 from html_builder import build_html
@@ -82,7 +82,7 @@ DAYS_SV = {
 
 WEATHER_URL = (
     "https://api.open-meteo.com/v1/forecast"
-    "?latitude=58.59&longitude=16.18"
+    "?latitude=59.33&longitude=18.07"
     "&current=temperature_2m,weather_code"
     "&timezone=Europe%2FStockholm"
 )
@@ -291,135 +291,30 @@ def fetch_tech_articles(seen: set, liked: set, disliked: set) -> list:
     return top
 
 
-# ── NT.se Playwright-scraper ──────────────────────────────────────────────────
-async def nt_fetch_articles(seen: set, username: str, password: str) -> list:
+# ── NT.se RSS-scraper ────────────────────────────────────────────────────────
+def nt_fetch_articles(seen: set) -> list:
+    """Hämtar nyheter om Dolphins och IFK Norrköping via NT.se RSS (utan inloggning)."""
     articles = []
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-        )
-        page = await context.new_page()
-
-        # ── Steg 1: Gå direkt till NTM login-sidan ───────────────────────────
-        print("   Navigerar till login.ntm.se…")
-        await page.goto("https://login.ntm.se/", wait_until="load", timeout=30000)
-        await page.wait_for_timeout(3000)
-        print(f"   Aktuell URL: {page.url}")
-
-        # ── Steg 2: Hantera eventuell cookie-banner ───────────────────────────
-        for frame in page.frames:
-            try:
-                btn = await frame.query_selector(
-                    "button[title*='Godkänn'], button[title*='Accept'], "
-                    "button:has-text('Godkänn alla'), button:has-text('Acceptera alla'), "
-                    "button:has-text('Accept all')"
-                )
-                if btn and await btn.is_visible():
-                    await btn.click()
-                    await page.wait_for_timeout(1500)
-                    print("   ✅ Cookie-banner stängd")
-                    break
-            except:
-                pass
-
-        # ── Steg 3: Hitta och fyll i e-postfält ──────────────────────────────
-        # Debugga vilka inputs som finns på sidan
-        inputs = await page.evaluate("""() => {
-            return Array.from(document.querySelectorAll('input')).map(i => ({
-                type: i.type, name: i.name, id: i.id, placeholder: i.placeholder
-            }));
-        }""")
-        print(f"   Inputs på sidan: {inputs}")
-
-        email_filled = False
-        for sel in [
-            "input[type='email']",
-            "input[name='Input.Email']",
-            "input[name='Email']",
-            "input[id='Input_Email']",
-            "input[name='Username']",
-            "input[id='Username']",
-            "input[type='text']",
-        ]:
-            try:
-                el = await page.query_selector(sel)
-                if el and await el.is_visible():
-                    await el.fill(username)
-                    email_filled = True
-                    print(f"   ✅ E-post ifylld med selector: {sel}")
-                    break
-            except:
+    for feed_url in NT_FEEDS:
+        feed = feedparser.parse(feed_url)
+        for entry in feed.entries:
+            url   = entry.get("link", "")
+            title = entry.get("title", "")
+            if not url or url in seen or not is_recent(entry):
                 continue
-
-        if not email_filled:
-            print("   ⚠️  Kunde inte hitta e-postfält – hoppar över NT")
-            await browser.close()
-            return articles
-
-        # ── Steg 4: Klicka Nästa / submit ────────────────────────────────────
-        try:
-            await page.locator("button[type='submit'], input[type='submit']").first.click(timeout=5000)
-            await page.wait_for_timeout(2000)
-        except:
-            pass
-
-        # ── Steg 5: Lösenord ──────────────────────────────────────────────────
-        try:
-            await page.wait_for_selector("input[type='password']", state="visible", timeout=10000)
-            await page.fill("input[type='password']", password)
-            await page.locator("button[type='submit'], input[type='submit']").first.click(timeout=5000)
-            await page.wait_for_load_state("networkidle", timeout=20000)
-            await page.wait_for_timeout(2000)
-            print(f"   ✅ Inloggad (nu på {page.url})")
-        except Exception as e:
-            print(f"   ⚠️  Lösenordssteg misslyckades: {e}")
-            await browser.close()
-            return articles
-
-        # ── Steg 6: Hämta och scrapa artiklar ────────────────────────────────
-        for feed_url in NT_FEEDS:
-            feed = feedparser.parse(feed_url)
-            for entry in feed.entries:
-                url   = entry.get("link","")
-                title = entry.get("title","")
-                if not url or url in seen or not is_recent(entry):
-                    continue
-                if not any(kw in (title + " " + entry.get("summary","")).lower() for kw in NT_KEYWORDS):
-                    continue
-
-                print(f"   → {title}")
-                try:
-                    await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                    await page.wait_for_timeout(1500)
-                    content = await page.evaluate("""() => {
-                        const sel = ['article','[class*="ArticleBody"]','[class*="article-body"]',
-                                     '[class*="article__body"]','[class*="story-body"]'];
-                        let el = null;
-                        for (const s of sel) { el = document.querySelector(s); if (el) break; }
-                        if (!el) return '';
-                        return Array.from(el.querySelectorAll('p'))
-                            .map(p => p.innerText.trim())
-                            .filter(t => t.length > 40)
-                            .join('\\n\\n');
-                    }""")
-                    articles.append({
-                        "url": url, "title": title,
-                        "summary": entry.get("summary",""),
-                        "text": content or "", "source": "NT.se",
-                        "score": 10, "date": entry.get("published",""),
-                    })
-                except Exception as e:
-                    print(f"     ⚠️  Scraping-fel: {e}")
-                    articles.append({
-                        "url": url, "title": title,
-                        "summary": entry.get("summary",""),
-                        "text": "", "source": "NT.se",
-                        "score": 10, "date": entry.get("published",""),
-                    })
-
-        await browser.close()
+            text_lower = (title + " " + entry.get("summary", "")).lower()
+            if not any(kw in text_lower for kw in NT_KEYWORDS):
+                continue
+            print(f"   → {title}")
+            articles.append({
+                "url":     url,
+                "title":   title,
+                "summary": entry.get("summary", ""),
+                "text":    "",   # NT kräver inloggning för fulltext
+                "source":  "NT.se",
+                "score":   10,
+                "date":    entry.get("published", ""),
+            })
     return articles
 
 
@@ -482,7 +377,7 @@ def upload_to_drive(filepath: str, folder_id: str,
 
 
 # ── Huvudlogik ────────────────────────────────────────────────────────────────
-async def main():
+def main():
     now      = datetime.now()
     date_iso = now.strftime("%Y-%m-%d")
     date_sv  = f"{now.day} {MONTHS_SV[now.month]} {now.year}"
@@ -514,9 +409,7 @@ async def main():
     print(f"   {len(tech_articles)} artiklar")
 
     print("\n📡 NT.se (Playwright)…")
-    nt_articles = await nt_fetch_articles(
-        seen, os.environ["NT_USERNAME"], os.environ["NT_PASSWORD"]
-    )
+    nt_articles = nt_fetch_articles(seen)
     print(f"   {len(nt_articles)} artiklar om Dolphins/IFK")
 
     all_articles = svt_nyheter + svt_sport + nt_articles + tech_articles
@@ -564,4 +457,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

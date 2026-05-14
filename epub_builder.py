@@ -4,6 +4,7 @@ Optimerad för Kobo Libra Colour.
 """
 
 import re
+import html as html_module
 from ebooklib import epub
 
 # ── CSS – anpassad för Kobo Libra Colour ─────────────────────────────────────
@@ -90,9 +91,17 @@ hr { border: none; border-top: 1px solid #ccc; margin: 1.5em 0; }
 
 # ── Hjälpfunktioner ───────────────────────────────────────────────────────────
 def clean(text: str) -> str:
+    """Strip HTML tags, collapse whitespace, and escape XML special chars."""
     text = re.sub(r"<[^>]+>", " ", text)
     text = re.sub(r"\s+", " ", text)
-    return text.strip()
+    text = text.strip()
+    return html_module.escape(text)
+
+def clean_body(text: str) -> str:
+    """Clean body paragraph text — strip tags but keep & escaped."""
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return html_module.escape(text.strip())
 
 
 FALLBACK_HTML = """<?xml version='1.0' encoding='utf-8'?>
@@ -116,11 +125,11 @@ def make_chapter(uid: str, title: str, content: str, style_item) -> epub.EpubHtm
 
 
 def article_html(uid: str, article: dict) -> str:
-    title   = clean(article.get("title", ""))
-    summary = clean(article.get("summary", ""))
-    raw     = article.get("text", "")
-    source  = article.get("source", "")
-    date    = article.get("date", "")
+    title   = clean(article.get("title", "") or "")
+    summary = clean(article.get("summary", "") or "")
+    raw     = article.get("text", "") or ""
+    source  = html_module.escape(article.get("source", "") or "")
+    date    = html_module.escape(str(article.get("date", "") or ""))
     score   = article.get("score", "")
 
     score_badge = f'<span class="article-score">{score}/10</span>' if score and score != 10 else ""
@@ -129,12 +138,12 @@ def article_html(uid: str, article: dict) -> str:
 
     if raw:
         body = "".join(
-            f"<p>{p.strip()}</p>"
+            f"<p>{clean_body(p)}</p>"
             for p in raw.split("\n\n")
             if p.strip() and len(p.strip()) > 20
         )
     else:
-        body = '<p class="no-text">Artikeltexten kunde inte hämtas. Öppna originalet i webbläsaren.</p>'
+        body = '<p class="no-text">Artikeltexten kunde inte hämtas.</p>'
 
     return f"""<?xml version='1.0' encoding='utf-8'?>
 <!DOCTYPE html>
@@ -201,6 +210,14 @@ def build_epub(
     # ── Framsida ──────────────────────────────────────────────────────────
     w  = cover_data.get("weather", {})
     total = len(svt_nyheter) + len(svt_sport) + len(nt_articles) + len(tech_articles)
+    safe_summary = html_module.escape(ai_summary or "")
+    safe_weekday = html_module.escape(str(cover_data.get('weekday','')))
+    safe_date    = html_module.escape(str(cover_data.get('date','')))
+    safe_week    = html_module.escape(str(cover_data.get('week','')))
+    safe_nameday = html_module.escape(str(cover_data.get('nameday','–')))
+    safe_temp    = html_module.escape(str(w.get('temp','?')))
+    safe_desc    = html_module.escape(str(w.get('desc','')))
+    safe_usd     = html_module.escape(str(cover_data.get('usd_sek','?')))
 
     cover_content = f"""<?xml version='1.0' encoding='utf-8'?>
 <!DOCTYPE html>
@@ -214,21 +231,21 @@ def build_epub(
   <div class="cover">
     <h1 class="cover-title">Morgontidningen</h1>
     <p class="cover-date">
-      {cover_data.get('weekday','')} {cover_data.get('date','')} · Vecka {cover_data.get('week','')}
+      {safe_weekday} {safe_date} · Vecka {safe_week}
     </p>
 
     <div class="ai-box">
       <p class="ai-box-title">Dagens översikt</p>
-      <p>{ai_summary}</p>
+      <p>{safe_summary}</p>
     </div>
 
     <table class="meta-table">
       <tr><td class="meta-label">🎂 Namnsdag</td>
-          <td class="meta-value">{cover_data.get('nameday','–')}</td></tr>
+          <td class="meta-value">{safe_nameday}</td></tr>
       <tr><td class="meta-label">🌤 Väder Norrköping</td>
-          <td class="meta-value">{w.get('temp','?')}°C · {w.get('desc','')}</td></tr>
+          <td class="meta-value">{safe_temp}°C · {safe_desc}</td></tr>
       <tr><td class="meta-label">💵 USD/SEK</td>
-          <td class="meta-value">{cover_data.get('usd_sek','?')} kr</td></tr>
+          <td class="meta-value">{safe_usd} kr</td></tr>
       <tr><td class="meta-label">📰 Artiklar idag</td>
           <td class="meta-value">{total} st</td></tr>
     </table>

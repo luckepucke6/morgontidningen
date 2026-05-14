@@ -143,7 +143,7 @@ def build_html(
   </div>
   <table class="meta-table">
     <tr><td class="meta-label">🎂 Namnsdag</td><td class="meta-value">{nameday}</td></tr>
-    <tr><td class="meta-label">🌤 Väder Norrköping</td><td class="meta-value">{temp}°C · {desc}</td></tr>
+    <tr><td class="meta-label">🌤 Väder {city}</td><td class="meta-value">{temp}°C · {desc}</td></tr>
     <tr><td class="meta-label">💵 USD/SEK</td><td class="meta-value">{usd_sek} kr</td></tr>
     <tr><td class="meta-label">📰 Artiklar idag</td><td class="meta-value">{total} st</td></tr>
   </table>

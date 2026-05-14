@@ -208,52 +208,83 @@ async def nt_fetch_articles(seen: set, username: str, password: str) -> list:
         )
         page = await context.new_page()
 
-        print("   Laddar NT.se…")
+        # ── Steg 1: Ladda startsidan ──────────────────────────────────────────
+        print("   Laddar NT.se startsida…")
         await page.goto("https://nt.se", wait_until="domcontentloaded")
-        await page.wait_for_timeout(2000)
+        await page.wait_for_timeout(3000)
 
+        # ── Steg 2: Hantera SP Consent Message cookie-banner (iframe) ─────────
+        # NT.se använder "SP Consent Message" som ligger i en iframe
+        print("   Letar efter cookie-banner…")
+        cookie_clicked = False
         for frame in page.frames:
             try:
+                # Prova att hitta synlig acceptera-knapp i varje frame
                 btn = await frame.query_selector(
-                    "button#accept-all, button[data-testid='accept-all'], "
-                    "button:has-text('Acceptera alla'), button:has-text('Godkänn')"
+                    "button[title*='Godkänn'], button[title*='Accept'], "
+                    "button:has-text('Godkänn alla'), button:has-text('Acceptera alla'), "
+                    "button:has-text('Accept all'), [data-testid='accept-all']"
                 )
-                if btn:
+                if btn and await btn.is_visible():
                     await btn.click()
-                    await page.wait_for_timeout(1000)
-                    print("   ✅ Cookie-banner stängd")
+                    await page.wait_for_timeout(1500)
+                    cookie_clicked = True
+                    print("   ✅ Cookie-banner (iframe) stängd")
                     break
             except:
                 pass
+        if not cookie_clicked:
+            print("   ℹ️  Ingen cookie-banner hittad, fortsätter")
 
+        # ── Steg 3: Hitta synlig Logga in-länk på startsidan ──────────────────
+        print("   Letar efter Logga in-knapp…")
+        try:
+            # :visible säkerställer att vi inte klickar på dolda spök-knappar
+            await page.click(
+                "a:visible:has-text('Logga in'), button:visible:has-text('Logga in')",
+                timeout=8000
+            )
+            await page.wait_for_load_state("networkidle", timeout=20000)
+            await page.wait_for_timeout(2000)
+            print(f"   ✅ På inloggningssidan: {page.url}")
+        except:
+            print("   ℹ️  Hittade ingen synlig Logga in-knapp, navigerar direkt")
+            await page.goto("https://nt.se/mitt-konto/logga-in/",
+                            wait_until="networkidle", timeout=30000)
+            await page.wait_for_timeout(2000)
+
+        # ── Steg 4: Fyll i e-post (steg 1 av 2-stegsinloggning) ──────────────
+        email_selector = (
+            "input[type='email']:visible, input[name='Username']:visible, "
+            "input[id='Username']:visible, input[name='email']:visible"
+        )
+        await page.wait_for_selector(email_selector, timeout=15000)
+        await page.fill(email_selector, username)
+        print(f"   ✅ E-post ifylld")
+
+        # Klicka synlig Nästa-knapp
         try:
             await page.click(
-                "a[href*='logga-in'], a:has-text('Logga in'), button:has-text('Logga in')",
+                "button:visible:has-text('Nästa'), button:visible:has-text('Fortsätt'), "
+                "input[type='submit']:visible",
                 timeout=5000
             )
-            await page.wait_for_load_state("domcontentloaded")
-        except:
-            await page.goto("https://nt.se/mitt-konto/logga-in/", wait_until="domcontentloaded")
-        await page.wait_for_timeout(1500)
-
-        await page.fill(
-            "input[type='email'], input[name='email'], input[name='username'], input[placeholder*='e-post']",
-            username
-        )
-        try:
-            await page.click(
-                "button:has-text('Nästa'), button:has-text('Fortsätt'), input[value='Nästa']",
-                timeout=3000
-            )
-            await page.wait_for_timeout(1500)
+            await page.wait_for_timeout(2000)
         except:
             pass
 
+        # ── Steg 5: Fyll i lösenord ───────────────────────────────────────────
+        await page.wait_for_selector("input[type='password']:visible", timeout=10000)
         await page.fill("input[type='password']", password)
-        await page.click("button[type='submit'], input[type='submit']")
-        await page.wait_for_load_state("domcontentloaded")
+
+        # Klicka synlig inloggningsknapp
+        await page.click(
+            "button:visible[type='submit'], input:visible[type='submit']",
+            timeout=5000
+        )
+        await page.wait_for_load_state("networkidle", timeout=20000)
         await page.wait_for_timeout(2000)
-        print("   ✅ Inloggad på NT.se")
+        print(f"   ✅ Inloggad på NT.se (nu på {page.url})")
 
         for feed_url in NT_FEEDS:
             feed = feedparser.parse(feed_url)

@@ -59,8 +59,7 @@ SVT_FEEDS = {
 }
 
 NT_FEEDS = [
-    "https://nt.se/rss/",
-    "https://nt.se/sport/rss/",
+    "https://news.google.com/rss/search?q=Norrköping&hl=sv&gl=SE&ceid=SE:sv",
 ]
 
 TECH_FEEDS = {
@@ -318,7 +317,7 @@ def nt_fetch_articles(seen: set) -> list:
                 "title":   title,
                 "summary": entry.get("summary", ""),
                 "text":    "",   # NT kräver inloggning för fulltext
-                "source":  "NT.se",
+                "source":  "Google News",
                 "score":   10,
                 "date":    entry.get("published", ""),
             })

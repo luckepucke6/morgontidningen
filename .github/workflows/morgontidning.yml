@@ -1,0 +1,45 @@
+name: Morgontidningen 📰
+
+on:
+  schedule:
+    - cron: "30 6 * * *"   # 06:30 UTC = 07:30 / 08:30 svensk tid
+  workflow_dispatch:
+
+jobs:
+  bygg-tidning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Hämta repot
+        uses: actions/checkout@v4
+
+      - name: Sätt upp Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installera Python-beroenden
+        run: pip install -r requirements.txt
+
+      - name: Installera Playwright + Chromium
+        run: |
+          playwright install chromium
+          playwright install-deps chromium
+
+      - name: Kör Morgontidningen
+        env:
+          NT_USERNAME:           ${{ secrets.NT_USERNAME }}
+          NT_PASSWORD:           ${{ secrets.NT_PASSWORD }}
+          OPENAI_API_KEY:        ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_CLIENT_ID:      ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET:  ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN:  ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+        run: python morgontidning.py
+
+      - name: Spara nyhetslogg
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "🤖 Uppdatera nyhetslogg.json"
+          file_pattern: nyhetslogg.json

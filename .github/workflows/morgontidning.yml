@@ -8,7 +8,7 @@ on:
 jobs:
   bygg-tidning:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
 
     steps:
       - name: Hämta repot
@@ -19,22 +19,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Installera Python-beroenden
+      - name: Installera beroenden
         run: pip install -r requirements.txt
-
-      - name: Installera Playwright + Chromium
-        run: |
-          playwright install chromium
-          playwright install-deps chromium
 
       - name: Kör Morgontidningen
         env:
-          NT_USERNAME:           ${{ secrets.NT_USERNAME }}
-          NT_PASSWORD:           ${{ secrets.NT_PASSWORD }}
-          OPENAI_API_KEY:        ${{ secrets.OPENAI_API_KEY }}
-          GOOGLE_CLIENT_ID:      ${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET:  ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          GOOGLE_REFRESH_TOKEN:  ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          OPENAI_API_KEY:         ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_CLIENT_ID:       ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET:   ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN:   ${{ secrets.GOOGLE_REFRESH_TOKEN }}
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
         run: python morgontidning.py
 

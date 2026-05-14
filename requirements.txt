@@ -1,0 +1,8 @@
+feedparser
+requests
+beautifulsoup4
+playwright
+openai
+google-api-python-client
+google-auth
+google-auth-oauthlib

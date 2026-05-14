@@ -108,20 +108,21 @@ def build_html(
         ("Tech & AI",   "💻", tech_articles),
     ]
 
-    w         = cover_data.get("weather", {})
-    date_str  = e(cover_data.get("date", ""))
-    weekday   = e(cover_data.get("weekday", ""))
-    week      = e(cover_data.get("week", ""))
-    nameday   = e(cover_data.get("nameday", "–"))
-    temp      = e(w.get("temp", "?"))
-    desc      = e(w.get("desc", ""))
-    usd_sek   = e(cover_data.get("usd_sek", "?"))
-    summary   = e(ai_summary or "")
-    total     = sum(len(arts) for _, _, arts in sections)
+    w             = cover_data.get("weather", {})
+    date_str      = e(cover_data.get("date", ""))
+    weekday       = e(cover_data.get("weekday", ""))
+    week          = e(cover_data.get("week", ""))
+    nameday       = e(cover_data.get("nameday", "–"))
+    temp          = e(w.get("temp", "?"))
+    desc          = e(w.get("desc", ""))
+    weather_city  = e(cover_data.get("weather_city", ""))
+    usd_sek       = e(cover_data.get("usd_sek", "?"))
+    summary       = e(ai_summary or "")
+    total         = sum(len(arts) for _, _, arts in sections)
 
     parts = []
 
-    # ── DOCTYPE + HEAD ────────────────────────────────────────────────────────
+    # ── DOCTYPE + HEAD ───────────────────────────────────────────────────────
     parts.append(f"""<!DOCTYPE html>
 <html lang="sv">
 <head>
@@ -133,7 +134,7 @@ def build_html(
 <body>
 """)
 
-    # ── FRAMSIDA ──────────────────────────────────────────────────────────────
+    # ── FRAMSIDA ─────────────────────────────────────────────────────────
     parts.append(f"""<div class="cover">
   <h1>Morgontidningen</h1>
   <p class="cover-date">{weekday} {date_str} &nbsp;·&nbsp; Vecka {week}</p>
@@ -143,7 +144,7 @@ def build_html(
   </div>
   <table class="meta-table">
     <tr><td class="meta-label">🎂 Namnsdag</td><td class="meta-value">{nameday}</td></tr>
-    <tr><td class="meta-label">🌤 Väder {city}</td><td class="meta-value">{temp}°C · {desc}</td></tr>
+    <tr><td class="meta-label">🌤 Väder {weather_city}</td><td class="meta-value">{temp}°C · {desc}</td></tr>
     <tr><td class="meta-label">💵 USD/SEK</td><td class="meta-value">{usd_sek} kr</td></tr>
     <tr><td class="meta-label">📰 Artiklar idag</td><td class="meta-value">{total} st</td></tr>
   </table>

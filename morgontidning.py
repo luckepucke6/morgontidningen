@@ -39,6 +39,13 @@ TECH_LOW_VALUE = [
     "recension", "guide", "tips", "topp 10", "lista", "quiz",
 ]
 
+# Väder – koordinater för din stad
+# Stockholm: 59.33, 18.07 | Göteborg: 57.70, 11.97 | Malmö: 55.60, 13.00
+# Norrköping: 58.59, 16.18 | Linköping: 58.41, 15.62
+WEATHER_LAT  = 59.33   # Latitud
+WEATHER_LON  = 18.07   # Longitud
+WEATHER_CITY = "Stockholm"   # Visas på framsidan
+
 # NT.se – nyckelord för att hitta relevanta artiklar
 NT_KEYWORDS = ["dolphins", "ifk norrköping", "peking"]
 
@@ -81,10 +88,10 @@ DAYS_SV = {
 }
 
 WEATHER_URL = (
-    "https://api.open-meteo.com/v1/forecast"
-    "?latitude=59.33&longitude=18.07"
-    "&current=temperature_2m,weather_code"
-    "&timezone=Europe%2FStockholm"
+    f"https://api.open-meteo.com/v1/forecast"
+    f"?latitude={WEATHER_LAT}&longitude={WEATHER_LON}"
+    f"&current=temperature_2m,weather_code"
+    f"&timezone=Europe%2FStockholm"
 )
 WEATHER_CODES = {
     0:"Klart", 1:"Mestadels klart", 2:"Delvis molnigt", 3:"Mulet",
@@ -395,7 +402,7 @@ def main():
     week_num = now.isocalendar()[1]
     cover_data = {
         "date": date_sv, "weekday": day_sv, "week": week_num,
-        "nameday": nameday, "weather": weather, "usd_sek": usd_sek,
+        "nameday": nameday, "weather": weather, "usd_sek": usd_sek, "weather_city": WEATHER_CITY,
     }
     print(f"   {day_sv} v.{week_num} · {weather['temp']}°C {weather['desc']} · "
           f"USD/SEK {usd_sek} · Namnsdag: {nameday}")

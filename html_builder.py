@@ -98,15 +98,21 @@ def build_html(
     ai_summary: str,
     svt_nyheter: list,
     svt_sport: list,
-    nt_articles: list,
+    econ_articles: list,
+    world_articles: list,
+    science_articles: list,
     tech_articles: list,
 ):
+    # Definition av tidningens struktur
     sections = [
         ("SVT Nyheter", "📺", svt_nyheter),
         ("SVT Sport",   "⚽", svt_sport),
-        ("NT Sport",    "🏈", nt_articles),
+        ("Ekonomi & Marknad", "📈", econ_articles),
+        ("Utrikes & Analys", "🌍", world_articles),
+        ("Vetenskap & Framtid", "🔭", science_articles),
         ("Tech & AI",   "💻", tech_articles),
     ]
+    # ... resten av koden är samma som din tidigare builder ...
 
     w             = cover_data.get("weather", {})
     date_str      = e(cover_data.get("date", ""))

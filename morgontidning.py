@@ -1,43 +1,60 @@
 """
 morgontidning.py – Master-bot
-Kombinerar SVT, NT.se och Tech-nyheter till en daglig EPUB
-och laddar upp den till Google Drive (OAuth) för Kobo Libra Colour.
+Kombinerar SVT, NT.se och Tech-nyheter till en daglig HTML-tidning
+och laddar upp den till Google Drive för Kobo Libra Colour.
 """
 
 import os, json, asyncio
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import requests
+from bs4 import BeautifulSoup
 import feedparser
 from playwright.async_api import async_playwright
 from openai import OpenAI
 
 from html_builder import build_html
 
-# ── Svenska datum ────────────────────────────────────────────────────────────
-MONTHS_SV = {
-    1:"januari", 2:"februari", 3:"mars", 4:"april", 5:"maj", 6:"juni",
-    7:"juli", 8:"augusti", 9:"september", 10:"oktober", 11:"november", 12:"december"
-}
-DAYS_SV = {
-    "Monday":"Måndag","Tuesday":"Tisdag","Wednesday":"Onsdag",
-    "Thursday":"Torsdag","Friday":"Fredag","Saturday":"Lördag","Sunday":"Söndag"
-}
+# ═══════════════════════════════════════════════════════════════════════════════
+#  KONFIGURATION – Ändra här för att anpassa tidningen
+# ═══════════════════════════════════════════════════════════════════════════════
 
-# ── Konfiguration ────────────────────────────────────────────────────────────
-SEEN_FILE     = Path("nyhetslogg.json")
-FEEDBACK_FILE = Path("feedback.txt")
-MAX_AGE_HOURS = 48
+# Antal artiklar per sektion
+SVT_NYHETER_COUNT = 3     # SVT Nyheter
+SVT_SPORT_COUNT   = 2     # SVT Sport
+TECH_COUNT        = 6     # Tech & AI
+
+# Poängsättning för Tech (artiklar under TECH_MIN_SCORE filtreras bort)
+TECH_MIN_SCORE    = 4     # 1–10
+
+# Artiklar äldre än detta antal timmar ignoreras
+MAX_AGE_HOURS     = 48
+
+# Nyckelord som höjer/sänker Tech-artiklar (lägg till egna)
+TECH_HIGH_VALUE = [
+    "ai", "artificiell intelligens", "llm", "gpt", "sverige",
+    "startup", "förvärv", "ipo", "openai", "anthropic", "robotar",
+]
+TECH_LOW_VALUE = [
+    "recension", "guide", "tips", "topp 10", "lista", "quiz",
+]
+
+# NT.se – nyckelord för att hitta relevanta artiklar
+NT_KEYWORDS = ["dolphins", "ifk norrköping", "peking"]
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  KÄLLOR – Lägg till eller ta bort RSS-flöden här
+# ═══════════════════════════════════════════════════════════════════════════════
 
 SVT_FEEDS = {
     "SVT Nyheter": "https://www.svt.se/nyheter/rss.xml",
     "SVT Sport":   "https://www.svt.se/sport/rss.xml",
 }
-SVT_NYHETER_COUNT = 3
-SVT_SPORT_COUNT   = 2
 
-NT_FEEDS    = ["https://nt.se/rss/", "https://nt.se/sport/rss/"]
-NT_KEYWORDS = ["dolphins", "ifk norrköping", "peking"]
+NT_FEEDS = [
+    "https://nt.se/rss/",
+    "https://nt.se/sport/rss/",
+]
 
 TECH_FEEDS = {
     "TechCrunch": "https://techcrunch.com/feed/",
@@ -46,10 +63,22 @@ TECH_FEEDS = {
     "Breakit":    "https://www.breakit.se/feed/artiklar",
     "Di Digital": "https://digital.di.se/rss",
 }
-TECH_COUNT      = 6
-TECH_MIN_SCORE  = 4
-TECH_HIGH_VALUE = ["ai","artificiell intelligens","llm","gpt","sverige","startup","förvärv","ipo","openai","anthropic"]
-TECH_LOW_VALUE  = ["recension","guide","tips","topp 10","lista","quiz"]
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  INTERNT – Ändra inte om du inte vet vad du gör
+# ═══════════════════════════════════════════════════════════════════════════════
+
+SEEN_FILE     = Path("nyhetslogg.json")
+FEEDBACK_FILE = Path("feedback.txt")
+
+MONTHS_SV = {
+    1:"januari", 2:"februari", 3:"mars", 4:"april", 5:"maj", 6:"juni",
+    7:"juli", 8:"augusti", 9:"september", 10:"oktober", 11:"november", 12:"december"
+}
+DAYS_SV = {
+    "Monday":"Måndag","Tuesday":"Tisdag","Wednesday":"Onsdag",
+    "Thursday":"Torsdag","Friday":"Fredag","Saturday":"Lördag","Sunday":"Söndag"
+}
 
 WEATHER_URL = (
     "https://api.open-meteo.com/v1/forecast"
@@ -92,6 +121,59 @@ def is_recent(entry) -> bool:
         return True
     pub_dt = datetime(*published[:6], tzinfo=timezone.utc)
     return datetime.now(timezone.utc) - pub_dt < timedelta(hours=MAX_AGE_HOURS)
+
+
+# ── Fulltext-scraping (SVT & Tech) ────────────────────────────────────────────
+ARTICLE_SELECTORS = [
+    "article",
+    "[class*='article-body']",
+    "[class*='ArticleBody']",
+    "[class*='article__body']",
+    "[class*='story-body']",
+    "[class*='body-text']",
+    "[class*='content-body']",
+    "main",
+]
+
+def scrape_article_text(url: str) -> str:
+    """Hämtar fulltexten från en artikel via requests + BeautifulSoup."""
+    try:
+        resp = requests.get(
+            url,
+            timeout=15,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; nyhetsbot/1.0)"},
+        )
+        if resp.status_code != 200:
+            return ""
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # Ta bort skräp
+        for tag in soup(["script", "style", "nav", "header", "footer",
+                         "aside", "figure", "figcaption", "form", "button"]):
+            tag.decompose()
+
+        # Prova selektorer i tur och ordning
+        container = None
+        for sel in ARTICLE_SELECTORS:
+            container = soup.select_one(sel)
+            if container:
+                break
+
+        if not container:
+            container = soup.find("body")
+        if not container:
+            return ""
+
+        paragraphs = [
+            p.get_text(separator=" ", strip=True)
+            for p in container.find_all("p")
+            if len(p.get_text(strip=True)) > 40
+        ]
+        return "\n\n".join(paragraphs)
+
+    except Exception as e:
+        print(f"     ⚠️  Scraping-fel ({url[:60]}…): {e}")
+        return ""
 
 
 # ── Framsidedata ──────────────────────────────────────────────────────────────
@@ -149,7 +231,7 @@ def fetch_svt_articles(seen: set) -> tuple[list, list]:
                 "url":     link,
                 "title":   entry.get("title",""),
                 "summary": entry.get("summary",""),
-                "text":    "",
+                "text":    "",   # hämtas nedan
                 "source":  source,
                 "score":   score_svt(entry, source),
                 "date":    entry.get("published",""),
@@ -157,6 +239,12 @@ def fetch_svt_articles(seen: set) -> tuple[list, list]:
             (nyheter if source == "SVT Nyheter" else sport).append(art)
     nyheter.sort(key=lambda x: x["score"], reverse=True)
     sport.sort(key=lambda x: x["score"], reverse=True)
+    top = nyheter[:SVT_NYHETER_COUNT] + sport[:SVT_SPORT_COUNT]
+
+    print(f"   Hämtar fulltext för {len(top)} SVT-artiklar…")
+    for art in top:
+        art["text"] = scrape_article_text(art["url"])
+
     return nyheter[:SVT_NYHETER_COUNT], sport[:SVT_SPORT_COUNT]
 
 
@@ -188,13 +276,19 @@ def fetch_tech_articles(seen: set, liked: set, disliked: set) -> list:
                     "url":     link,
                     "title":   entry.get("title",""),
                     "summary": entry.get("summary",""),
-                    "text":    "",
+                    "text":    "",   # hämtas nedan
                     "source":  source,
                     "score":   score,
                     "date":    entry.get("published",""),
                 })
     candidates.sort(key=lambda x: x["score"], reverse=True)
-    return candidates[:TECH_COUNT]
+    top = candidates[:TECH_COUNT]
+
+    print(f"   Hämtar fulltext för {len(top)} Tech-artiklar…")
+    for art in top:
+        art["text"] = scrape_article_text(art["url"])
+
+    return top
 
 
 # ── NT.se Playwright-scraper ──────────────────────────────────────────────────
@@ -204,72 +298,58 @@ async def nt_fetch_articles(seen: set, username: str, password: str) -> list:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                       "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         )
         page = await context.new_page()
 
-        # ── Steg 1: Ladda startsidan ──────────────────────────────────────────
-        print("   Laddar NT.se startsida…")
-        await page.goto("https://nt.se", wait_until="domcontentloaded")
+        # ── Steg 1: Gå direkt till NTM login-sidan ───────────────────────────
+        print("   Navigerar till login.ntm.se…")
+        await page.goto("https://login.ntm.se/", wait_until="load", timeout=30000)
         await page.wait_for_timeout(3000)
+        print(f"   Aktuell URL: {page.url}")
 
-        # ── Steg 2: Hantera SP Consent Message cookie-banner (iframe) ─────────
-        # NT.se använder "SP Consent Message" som ligger i en iframe
-        print("   Letar efter cookie-banner…")
-        cookie_clicked = False
+        # ── Steg 2: Hantera eventuell cookie-banner ───────────────────────────
         for frame in page.frames:
             try:
-                # Prova att hitta synlig acceptera-knapp i varje frame
                 btn = await frame.query_selector(
                     "button[title*='Godkänn'], button[title*='Accept'], "
                     "button:has-text('Godkänn alla'), button:has-text('Acceptera alla'), "
-                    "button:has-text('Accept all'), [data-testid='accept-all']"
+                    "button:has-text('Accept all')"
                 )
                 if btn and await btn.is_visible():
                     await btn.click()
                     await page.wait_for_timeout(1500)
-                    cookie_clicked = True
-                    print("   ✅ Cookie-banner (iframe) stängd")
+                    print("   ✅ Cookie-banner stängd")
                     break
             except:
                 pass
-        if not cookie_clicked:
-            print("   ℹ️  Ingen cookie-banner hittad, fortsätter")
 
-        # ── Steg 3: Hitta synlig Logga in-länk på startsidan ──────────────────
-        print("   Letar efter Logga in-knapp…")
-        try:
-            # :visible säkerställer att vi inte klickar på dolda spök-knappar
-            await page.click(
-                "a:visible:has-text('Logga in'), button:visible:has-text('Logga in')",
-                timeout=8000
-            )
-            await page.wait_for_load_state("networkidle", timeout=20000)
-            await page.wait_for_timeout(2000)
-            print(f"   ✅ På inloggningssidan: {page.url}")
-        except:
-            print("   ℹ️  Hittade ingen synlig Logga in-knapp, navigerar direkt")
-            await page.goto("https://nt.se/mitt-konto/logga-in/",
-                            wait_until="networkidle", timeout=30000)
-            await page.wait_for_timeout(2000)
+        # ── Steg 3: Hitta och fyll i e-postfält ──────────────────────────────
+        # Debugga vilka inputs som finns på sidan
+        inputs = await page.evaluate("""() => {
+            return Array.from(document.querySelectorAll('input')).map(i => ({
+                type: i.type, name: i.name, id: i.id, placeholder: i.placeholder
+            }));
+        }""")
+        print(f"   Inputs på sidan: {inputs}")
 
-        # ── Steg 4: Fyll i e-post (steg 1 av 2-stegsinloggning) ──────────────
-        # Prova flera möjliga selektorer för e-postfältet på login.ntm.se
         email_filled = False
         for sel in [
             "input[type='email']",
+            "input[name='Input.Email']",
+            "input[name='Email']",
+            "input[id='Input_Email']",
             "input[name='Username']",
             "input[id='Username']",
-            "input[name='email']",
-            "input[name='Email']",
             "input[type='text']",
         ]:
             try:
-                await page.wait_for_selector(sel, state="visible", timeout=5000)
-                await page.fill(sel, username)
-                email_filled = True
-                print(f"   ✅ E-post ifylld (selector: {sel})")
-                break
+                el = await page.query_selector(sel)
+                if el and await el.is_visible():
+                    await el.fill(username)
+                    email_filled = True
+                    print(f"   ✅ E-post ifylld med selector: {sel}")
+                    break
             except:
                 continue
 
@@ -278,23 +358,27 @@ async def nt_fetch_articles(seen: set, username: str, password: str) -> list:
             await browser.close()
             return articles
 
-        # Klicka Nästa-knapp
+        # ── Steg 4: Klicka Nästa / submit ────────────────────────────────────
         try:
             await page.locator("button[type='submit'], input[type='submit']").first.click(timeout=5000)
             await page.wait_for_timeout(2000)
         except:
             pass
 
-        # ── Steg 5: Fyll i lösenord ───────────────────────────────────────────
-        await page.wait_for_selector("input[type='password']", state="visible", timeout=10000)
-        await page.fill("input[type='password']", password)
+        # ── Steg 5: Lösenord ──────────────────────────────────────────────────
+        try:
+            await page.wait_for_selector("input[type='password']", state="visible", timeout=10000)
+            await page.fill("input[type='password']", password)
+            await page.locator("button[type='submit'], input[type='submit']").first.click(timeout=5000)
+            await page.wait_for_load_state("networkidle", timeout=20000)
+            await page.wait_for_timeout(2000)
+            print(f"   ✅ Inloggad (nu på {page.url})")
+        except Exception as e:
+            print(f"   ⚠️  Lösenordssteg misslyckades: {e}")
+            await browser.close()
+            return articles
 
-        # Klicka inloggningsknapp
-        await page.locator("button[type='submit'], input[type='submit']").first.click(timeout=5000)
-        await page.wait_for_load_state("networkidle", timeout=20000)
-        await page.wait_for_timeout(2000)
-        print(f"   ✅ Inloggad på NT.se (nu på {page.url})")
-
+        # ── Steg 6: Hämta och scrapa artiklar ────────────────────────────────
         for feed_url in NT_FEEDS:
             feed = feedparser.parse(feed_url)
             for entry in feed.entries:
@@ -317,7 +401,7 @@ async def nt_fetch_articles(seen: set, username: str, password: str) -> list:
                         if (!el) return '';
                         return Array.from(el.querySelectorAll('p'))
                             .map(p => p.innerText.trim())
-                            .filter(t => t.length > 30)
+                            .filter(t => t.length > 40)
                             .join('\\n\\n');
                     }""")
                     articles.append({
@@ -334,6 +418,7 @@ async def nt_fetch_articles(seen: set, username: str, password: str) -> list:
                         "text": "", "source": "NT.se",
                         "score": 10, "date": entry.get("published",""),
                     })
+
         await browser.close()
     return articles
 
@@ -371,19 +456,16 @@ def upload_to_drive(filepath: str, folder_id: str,
     from googleapiclient.http import MediaFileUpload
 
     creds = Credentials(
-        token=None,
-        refresh_token=refresh_token,
-        client_id=client_id,
-        client_secret=client_secret,
+        token=None, refresh_token=refresh_token,
+        client_id=client_id, client_secret=client_secret,
         token_uri="https://oauth2.googleapis.com/token",
         scopes=["https://www.googleapis.com/auth/drive.file"],
     )
     creds.refresh(Request())
-
     service  = build("drive", "v3", credentials=creds)
     filename = os.path.basename(filepath)
 
-    # Ta bort gammal fil med samma namn om den finns
+    # Ta bort gammal version om den finns
     existing = service.files().list(
         q=f"name='{filename}' and '{folder_id}' in parents and trashed=false",
         fields="files(id)"
@@ -394,8 +476,7 @@ def upload_to_drive(filepath: str, folder_id: str,
     media  = MediaFileUpload(filepath, mimetype="text/html", resumable=True)
     result = service.files().create(
         body={"name": filename, "parents": [folder_id]},
-        media_body=media,
-        fields="id"
+        media_body=media, fields="id"
     ).execute()
     return result.get("id", "?")
 
@@ -451,7 +532,7 @@ async def main():
         print(f"   ⚠️  AI-fel: {e}")
         ai_summary = "Kunde inte generera sammanfattning idag."
 
-    print("\n📚 Bygger EPUB…")
+    print("\n📄 Bygger HTML-tidning…")
     html_filename = f"Morgontidningen_{date_iso}.html"
     build_html(
         filename=html_filename,
@@ -479,7 +560,7 @@ async def main():
         seen.add(art["url"])
     save_seen(seen)
 
-    print(f"\n🏁 Klart! Morgontidningen {date_sv} ligger i din Google Drive. God läsning!")
+    print(f"\n🏁 Klart! Morgontidningen {date_sv} är på väg till din Kobo. God läsning!")
 
 
 if __name__ == "__main__":

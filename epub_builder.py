@@ -95,14 +95,22 @@ def clean(text: str) -> str:
     return text.strip()
 
 
+FALLBACK_HTML = """<?xml version='1.0' encoding='utf-8'?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="sv">
+<head><meta charset="utf-8"/><title>Sida</title></head>
+<body><p>Innehåll saknas.</p></body>
+</html>"""
+
 def make_chapter(uid: str, title: str, content: str, style_item) -> epub.EpubHtml:
+    safe_content = content.strip() if content and content.strip() else FALLBACK_HTML
     ch = epub.EpubHtml(
         uid=uid,
-        title=title[:80],
+        title=(title or "Artikel")[:80],
         file_name=f"{uid}.xhtml",
         lang="sv",
     )
-    ch.content = content
+    ch.content = safe_content
     ch.add_item(style_item)
     return ch
 
